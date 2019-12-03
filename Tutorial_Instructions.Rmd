@@ -1,0 +1,471 @@
+---
+title: "Tutorial For  How To Conduct A Bayesian network meta-analysis"
+author: ""
+date: "11/29/2019"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+# Conducting a Bayesian Network Meta-Analysis: 
+
+This code is intended as a companion to the Frontiers article "How to conduct a Bayesian network meta-analysis"  Hu, Wang, Sargeant, Winder and O'Connor. 
+
+
+# Acknowledgement
+The jags.bugs code used in this tutorial are directly from, or slightly modified from, the publication.  Dias S, Welton NJ, Sutton AJ, et al. NICE DSU Technical Support Document 2: A Generalised Linear Modelling Framework for Pairwise and Network Meta-Analysis of Randomised Controlled Trials [Internet]. London: National Institute for Health and Care Excellence (NICE); 2014 Apr. Available from: https://www.ncbi.nlm.nih.gov/books/NBK310366/ 
+R scripts were modified from code previously used in the following mansucripts.  
+
+# Getting Started
+In this code,  we assume the reader knows how to load and install packages and has JAGS already install. JAGS can be install from https://sourceforge.net/projects/mcmc-jags/files/JAGS/4.x/ .  For Mac users, another option is to install homebrew at the terminal by coping and pasting the following at the terminal
+/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install) . After installation of homebrew then install JAGS by coping and pasting the following at the terminal  "homebrew brew install jags"
+
+
+# Loading The Required Packages
+This R chuck- install_packages - installs and loads all the packages needed for the analysis. It is only nessecary to install packages once using the command "install.packages(package.name)" . However, each time the anlaysis is conducted, t is nessecary to load packages each time the code is used using the "library(package.name)".  
+
+```{r,install-packages,results="hide",message=F}
+#install.packages("dplyr")
+#install.packages("network")
+#install.packages("MASS")
+#install.packages("rjags")
+#install.packages("EcoSimR")
+#install.packages("miceadds")
+#install.packages("openxlsx")
+#install.packages("usethis")
+#install.packages("mcmcplots)
+packages <- c("dplyr", "network", "MASS", "rjags", "EcoSimR", "miceadds", "openxlsx", "DT", "mcmcplots")
+lapply(packages, library, character.only = TRUE)
+```
+
+# Determine the path saving your figures
+```{r opts, echo = FALSE}
+knitr::opts_chunk$set(
+  fig.path = "figure/"
+)
+```
+
+# The Data Organization
+To use these scripts to conduct a network meta-analysis, two datasets are needed. 
+
+
+## The Mapping File
+The first dataset is a mapping file called "map_txt.csv" which contains the list of all treatments in the dataset and maps each treatment to a number starting from 1. This number, rather than the character-based name, is subsequently used in several scripts. When setting up the map_txt file, it is essential that the baseline treatment is labeled as 1. In our "map_txt.csv", the baseline treatment is the placebo group, therefore the placebo group has number 1. Make sure your "map_txt.csv" file has the same column names as this one because the subsequent code uses exactly these column names. The "map_txt.csv" file has 3 columns of data. 
+
+* 'name' is the full name of each treatment;
+
+* 'abbr' is the column containing the abbreviation of each treatment. An abbreviation is often needed when creating network plots, if the full name of the treatment is too long. If this is not a concern, then 'name' and 'abbr' can contain the same values. 
+
+* 'number' is a column containing the mapping number starting from 1.
+
+```{r,install-mapping-file}
+map_txt <- openxlsx::read.xlsx(xlsxFile = "./data/mapping and renaming TXT.xlsx")
+head(map_txt,3) #The "head: function provides the 1st three rows of R data.frame 
+```
+## The Extracted Data
+### Arm-Level Data
+The second dataset file used contains the extracted data from the studies and is called "MTCdata.csv" file. This file contains either arm-level data or contrast-level data from the extracted studies. 
+
+
+The arm_level MTCdata file has  11 variables. 
+
+ * study                   : a study number or ID.
+ * Number.of.Event.in.arm.1:number of events in arm 1
+ * Number.of.Event.in.arm.2: number of events in arm 2
+ * Total.number.in.arm.1   : number of in the denominator of the risk in arm 1
+ * Total.number.in.arm.2   : number of in the denominator of the risk in arm 1
+ * Total                   : number in the study
+ * Arm.1                   : character indicator of the treatment name which matches "name" in map_txt
+ * Arm.2                   : character indicator of the treatment name which matches "name" in map_txt
+ * Number.of.arms          : interger of study arms
+ * Arm1                    : number of the treatment which matches "number" in map_txt
+ * Arm2                    : number of the treatment which matches "number" in map_txt
+
+If the MTCdata file has studies with more than two arms, add corresponding column names with the same naming format. Also, make sure when you read in the data, set `stringsAsFactors` to be FALSE. 
+
+
+```{r, install-arm-data-file}
+MTCdata <- read.csv(file = "./data/MTCdata.csv", stringsAsFactors = F)
+head(MTCdata,3)
+names(MTCdata) #The "names: function provides the names of the variables in the R data.frame 
+str(MTCdata)  # The "str" functions provides the structire of the variables in the R data.frame
+#datatable(MTCdata, rownames = FALSE, filter="top", options = list(pageLength = 5, scrollX=T) )
+```
+
+### Contrast-Level Data
+It is also possible that the extracted data are contrast-level data. Contrast level describe the comparison of a pair of treatments. An example of a contrast-level data for catagorical outcomes is the odds ratio. For  continous data, an example of a contreact level outcome is the mean difference.  Contrast-level data are extracted because  authors do not report the arm level data or if the reviewer has a preference for the contrast level data. In veterinary clincial trials a common reason for using a contrast-level effect is that the trial was conducted in a setting that required adjusttment for non-independent observataions due to clustering by pen or farm. 
+
+The  contrast-level MTCdata file. 
+
+* study         : a study number or ID.
+* Arm.1         : character indicator of the treatment name which matches "name" in map_txt
+* Arm.2         : character indicator of the treatment name which matches "name" in map_txt
+* Number.of.arms: interger of study arms
+* lor.2         : numerical variable of the log odds of Arm 2 compared to Arm 1
+* se.2          : numerical varaible of teh se. of lor.2  0.42 0.527 0.646 0.687 0.419 ...
+* Arm1          : number of the treatment which matches "number" in map_txt
+* Arm2          : number of the treatment which matches "number" in map_txt
+* V             : 'V' is the variance of the log odds of 'Arm.1'. 'V' only has values when a study has more than two arms, otherwise it is NA. That's why in this data 'V' does not have numeric values
+* PLA.lo        : the baseline log odds, this only has values when a study has the baseline otherwise NA.
+
+
+```{r,install-contrast-data-file}
+MTCdata_contrast <- read.csv(file = "./data/MTCdata_contrast.csv", stringsAsFactors = F)
+head(MTCdata_contrast, 3)
+names(MTCdata_contrast)
+str(MTCdata_contrast)
+```
+
+##Loading the R scripts for the User-Defined Functions 
+To run the analysis, several R scripts and jags scripts needed.  These scripts run the analyses, create functions used in subsequent scripts, and generate output tables and plots. With this chuck of code all the scripts are loaded and functions created. The later chucksdraw on these user-defined functions to run the analyses. 
+
+After you have run the "run-all-scripts" chuck you will also see a large number of user-define R functions that have been created in the global environment. To read more about user-defined functions in R see https://www.statmethods.net/management/userfunctions.html 
+
+```{r,run-all-scripts, message=F, results="hide"}
+miceadds::source.all("./scripts/")
+```
+
+### Common User-Defined Function Options 
+User-defined functions are used in scripts and some have several options exist. Here we describe some of the frequently used options and explain their functionality.
+
+* dataType: This option describes the type of your MTCdata. Available options are “Arm” or “Contrast”. This option exists in the direct_comparison.R, general_model.R, genetateMTMNetwork.R, getBaselinePrior.R, mean_ranking_matrix.R, MTC_comparison.R, network_plot.R, pairwise_comp.R 
+* save_res: This is a logical argument that indicates whether to save the results (the output) into your local directory.  Available options are “T” or “F”. This option exists in the direct_comparison.R, direct_vs_MTC.R, getBaselinePrior.R, mean_ranking.matrix.R, MTC_comparison.R, network_geometry.R, pairwise_comp.R, prob_rank_table.R
+* good_event: This is an indiactor variable. Use the indicator, 1 if the events are good, 0 if the events are adverse (bad). THis option exists in general_model.R, prob_rank_table.R
+* arm_name: This options selects the treatment name type to output. Available options are “abbr” or “full” This option exists in direct_vs_MTC.R, mean_ranking.matrix.R, prob_rank_table.R, ranking_plot.R
+
+
+### An Example Of A User-Defined Function: The *network_geometry( )* Function
+Here we illustrate a user-defined function -- the network_geomtery. The reader can click on the function in the Global Environment to see the code.  The inputs required for the code are the MTC dataset either arm-level of contrast-level.  the "save_res" option is also needed. This function generates several outputs that are used later to create the network plot.  The function creates the "network_geom" object which contains the following:  
+
+*  The PIE index which is a metric for networks connectedness
+*  The c_score which is a metric of network connectedness
+*  A network geometry dataframe which containing the study ID and treatment arms.  
+*  A network co-occurance matrix 
+
+The network_geom object will appear in the "data" section of the Global Environment. The datasets network_cooc_mat.csv and Network_geiometry.csv are also output into the data folder. 
+
+```{r,user-defined-functions,message=F}
+network_geom <- network_geometry(MTCdata = MTCdata, save_res = T)
+network_geom$PIE
+network_geom$c_score
+network_geom$network_df
+network_geom$network_cooc_mat
+#datatable(network_geom$network_df, rownames = FALSE, filter="top", options = list(pageLength = 5, scrollX=T) )
+```
+
+## Baseline effects model - the log odds of the event
+
+### Using the **getBaselinePrior()** function
+In our workflow of conducting a network meta-anlaysis as described in the Frontiers mansucripts one of the first steps is to create the posterior distribtion of the baseline treatment on the log odds scale. This is achieved with the getBaselinePrior.R function. This functions determiens the hyperprior value for the baseline treatment on the logit scale by seperate mcmc simulation. 
+
+The "getBaselinePrior.R"  requires the following inputs:
+
+* The dataset to be used -- In our example this is the MTCdata  
+* The option for dataType- Arm or Contrast-- In our example - Arm  
+
+Defaults that are rarely changed, but can be modified in the "getBaselinePrior.R" script in the scripts folder. 
+
+* hyperSDInUnif: The prior distribution for heterogeneity parameter sigma is Unif(0, hyperSDInUnif). Default is 5.
+* hyperVarInNormMean: The prior distribution for the log odds is N(0, 1/hyperVarInNormMean). Default is 1e-4
+* parameters for running MCMC: i.e. n.adapt (default value = 5000), n.iter (default value = 10000), n.chains (default value = 3), n.thin (default value = 1)
+* n.burnin_prop: The proportion you want to do burning for a chain. Default is 0.5
+
+The "getBaselinePrior.R" returns the following output if save_res = T
+
+*A dataframe containing the baseline summary statistics called baselinePriorSmry generated from getBaselinePrior()
+    
+
+```{r,getbaselinePrior-chuck,message=F,results='hide'}
+baselinePriorSmry <- getBaselinePrior(MTCdata = MTCdata, dataType = "Arm")
+
+```
+
+```{r}
+baselinePriorSmry
+```
+## The Workflow Of A Network Meta-analysis
+## Step 1  
+Use the comparative effects model and a Markov chain Monte Carlo (MCMC) process to obtain the posterior distributions of the log odds ratios for the basic parameters. From those basic parameters, obtain the posterior distributions of the functional parameters. Ensure convergence by evaluating the trace plots and convergence criteria. 
+
+### Using the **general_model()** function
+This function runs the comparative effects model as described in the manuscript. The general model here is a random effects model.  
+
+The "general_model.R"  script requires the following  inputs: 
+
+* The dataset to be used -- In our example this is the MTCdata  
+* The option for dataType- Arm or Contrast-- In our example - Arm 
+* The option for good_event: Indicator, 1 if the events are good, 0 if the events are bad,. If the the event in your dataset is bad event, then you can set good_event to be 0, otherwise 1. This option will affect the rank of the treatments. 
+
+Defaults that are rarely changed, but can be modified in the "getBaselinePrior.R" script in the scripts folder.
+
+* hyperSDInUnif: The prior distribution for heterogeneity parameter sigma is Unif(0, hyperSDInUnif). Default is 5.
+* hyperVarInNormMean: The prior distribution for the log odds is N(0, 1/hyperVarInNormMean). Default is 1e-4
+* parameters for running MCMC: i.e. n.adapt (default value = 5000), n.iter (default value = 10000), n.chains (default value = 3), n.thin (default value = 1)
+* n.burnin_prop: The proportion you want to do burning for a chain. Default is 0.5
+
+The "general_model.R"  script returns the following outputs:
+
+* A dataframe in the Global Environment 
+* A dataset of the general model summary stored in the data folder called general_model_smry.csv
+* the mcmc simulation: an RData object stored in the RDataObjects folder called generalModeljagsOutput.Rdata
+* the mcmc simulation summary: an RData object stored in the RDataObjects folder called generalModelSummaryt.Rdata
+* model deviance information: generalModeldev_result.RData stored in the RDataObjects folder 
+
+
+The general model summary file uses several abbreviations as follows: 
+
+* RR[#N,#D]:  The risk ratio of all possible comparisons with the numerator treatment (#N) divided by the denominator treatment (#D) .
+* RRa[#N]: the risk ratio of the numerator treatment (#N) divided by the baseline treatment
+* T[#] : The absolute risk 
+* best[#]: The probability of being the best
+* d[#D]: The logs odds ratio of the basic paramters with the baseline as number of treatment as the denominator  
+* lor[#N,#D]: The log odds ratio of basic and funcational paramters with the numerator treatment (#N) divided by the denominator treatment (#D). 
+* or[#N,#D]: The odds ratio of all possible comparisons with the numerator treatment (#N) divided by the denominator treatment (#D)
+* resdev[#]: The residual deviance of the study 
+* rk[#]: The rankings for the treatments
+* rka[#]: The rankings for the treatments
+
+
+```{r,run-general-model-smry,message=F,results='hide'}
+jags_output <- general_model(MTCdata = MTCdata, baselinePriorSmry = baselinePriorSmry,good_event = 0, dataType = "Arm")
+
+general_model_smry <- jags_output$general_model_smry
+jags.out <- jags_output$jags.out
+head(general_model_smry)
+tail(general_model_smry)
+```
+
+Ensure convergence of the general model, below is a chunk to check the convergence of basic parameters. Note d[1] is the log odds ratio of placebo to placebo, thereforem, it is always 0.
+```{r, check-convergence_traceplot,message=F}
+traplot(jags.out, "d")
+```
+
+
+
+## Check the goodness of fit using the residdual 
+The next step of the workflow is to check the goodness of the model's fit using the (residual) deviance. This is obtained from the general_model output. 
+
+If the model provides a good fit, then the value of residual deviance should be close to the number of data points. In this example data, we have 25 two-arm study and 1 three-arm study. The residual deviance should be close to 2*25+3 = 53.
+```{r, check-the-residual-deviance, message=F}
+general_model_smry["totresdev", 1]
+```
+
+
+## Step 2: The Direct Pairwise Comparative Effects Model
+
+Assessing the consistency assumption requires a pairwise comparative effects model based only on direct estimates. The pairwise_comp() function rearranges the dataset to identify all possible pairwise comparisons. The MTC dataset has data arranged as a row per study, while the output of this function has each pairwise comparison as a unique row.  For datasets with only two arms studies, this makes no change to the dataset. However, for datasets with studies which have 3 or more arms, the arrangement is different.  The direct_comparison() function conducts the analysis only for pairwise comparison  dataset, i.e. no indirected comparisons.
+
+### Using the **pairwise_comp()** function
+ 
+This code creates a dataset of the pairwise comparison of the direct effects only. 
+
+The "pairwise_comp.R"  script requires the followinginputs:
+* The dataset to be used -- In our example this is the MTCdata  
+* The option for dataType- Arm or Contrast-- In our example - Arm 
+* The option for save_res are T or F to save the output into your local directory-- In our example - T 
+
+The "pairwise_comp.R" script returns:
+* A dataframe containing the pariwise comparison in the Global Environment 
+* A dataset called pairwise_comparison.csv in the data folder if save_res = true
+
+```{r, pairwise-chunk, message=F}
+pairwise <- pairwise_comp(MTCdata = MTCdata, dataType = "Arm", save_res = T)
+head(pairwise, 10)
+```
+
+### Using the **direct_comparisons()** function
+
+This function conducts the analysis on the direct comparison only. 
+
+The "direct_comparisons.R" script requires the following inputs:
+
+* The dataset to be used --the pairwise dataset: pairwise comparison generated from pairwise_comp()
+* The option for dataType- Arm or Contrast-- In our example - Arm 
+* The option for save_res are T or F to save the output into your local directory-- In our example - T
+
+Defaults that are rarely changed, but can be modified in the "direct_comparison.R" script in the scripts folder.
+
+*hyperSDInUnif: The prior distribution for heterogeneity parameter sigma is Unif(0, hyperSDInUnif). Default is 2.
+*hyperVarInNormMean: The prior distribution for the log odds is N(0, 1/hyperVarInNormMean). Default is 1e-4
+*parameters for running MCMC: i.e. n.adapt (default value = 5000), n.iter (default value = 10000), n.chains (default value = 3), n.thin (default value = 1)
+n.burnin_prop: The proportion you want to do burning for a chain. Default is 0.5
+
+The "direct_comparisons.R" script returns:
+
+* a dataset called direct which contains the direct log OR
+
+```{r, direct-comp-chunk, message=F, results="hide"}
+direct_comp <- direct_comparison(pairwise = pairwise, baselinePriorSmry = baselinePriorSmry, dataType = "Arm", save_res = T)
+
+head(direct_comp, 3)
+```
+
+##Step 3; Assessing Consistency. 
+
+
+Assess the consistency assumption for the treatment comparisons for which there is direct evidence. This is done by subtracting the mean estimated log odds ratios obtained from the posterior distributions of the pairwise meta-analyses from the mean estimated log odds ratios obtained from the posterior distributions of the network meta-analysis and looking for inconsistencies.
+
+
+### Using the **direct_vs_MTC()** function 
+
+This function generates data for a table commonly used in publications about network meta-analysis. The tables contains the direct comparison, MTC, and the indirect comparison  on the log odds ratio scale. 
+
+The "direct_vs_MTC.R" script requires the following inputs:
+
+* The datasets to be used = map_txt, general_model_sumy, direct_comp
+* The option for save_res are T or F to save the output into your local directory-- In our example - T 
+* The option for dataType- Arm or Contrast-- In our example - Arm 
+* The option for arm_name which selects the treatment name type to output. Available options are “abbr” or “full”  In our example - "abbr" 
+
+The "direct_vs_MTC.R" script returns:
+
+* A dataframe containing the comparison of direct comparison, MTC, and only indirect comparison 
+* Also save csv file ResultOfIndicretAnddirectComparison.csv if save_res is true
+
+```{r, direct-vs-MTC-matrix-chunk, message=F}
+direct_vs_MTC_matrix <- direct_vs_MTC(map_txt = map_txt, model_smry = general_model_smry, 
+                                      direct_compr = direct_comp, arm_name = "abbr", save_res = T)
+head(direct_vs_MTC_matrix, 3)
+```
+
+If you prefer to show the full name of treatments in this table, you can change the arm_name option. 
+
+```{r, message=F}
+direct_vs_MTC_matrix <- direct_vs_MTC(map_txt = map_txt, model_smry = general_model_smry, 
+                                      direct_compr = direct_comp, arm_name = "full", save_res = T)
+head(direct_vs_MTC_matrix, 3)
+```
+
+## Generating Output Tables Data 
+
+Having conducted the analysis and assessed convergence and consistency, the next step is to output the results. 
+ 
+### Using the **MTC_comparison()** function. 
+
+The "MTC_comparison.R" script requires the following inputs:
+* The datasets to be used = map_txt, general_model_sumy, direct_comp
+* The option for measure: the effect measure users want to compare, options are "RR" for risk ratio, "OR" for odds ratio, "LOR" for log odds ratio.
+* The option for  stat: the statistics users want to use for comparison, options are "mean" and "median"
+* The option for  num_digits: the number of decimal places in the output
+* The option for save_res are T or F to save the output into your local directory-- In our example - T 
+
+The "direct_vs_MTC.R" script returns:
+
+* A matrix with upper triangle to be mean or median, lower triangle to be 95% credible interval
+
+* If save_res = T, an csv file: MTC_comparison_risk_ratio_all_treat.csv will be saved in ./data folder.
+
+For example, if you want to show the log odds ratios (LOR) 95% credible interval and the mean of LOR:
+
+```{r, message=F}
+MTC_comp_LOR <- MTC_comparison(map_txt = map_txt, model_smry = general_model_smry, measure = "LOR",
+                              stat = "mean", save_res = T)
+MTC_comp_LOR
+```
+
+For example, the cell [1,2] is the posterior median of the risk ratio of treatment B to treatment A, and cell [2,1] is the corresponding 95% credible interval.
+
+If you want to show the odds ratios and their 95% credible interval:
+
+```{r, message=F}
+MTC_comp_OR <- MTC_comparison(map_txt = map_txt, model_smry = general_model_smry, measure = "OR",
+                              stat = "median", save_res = T)
+MTC_comp_OR
+```
+
+As for risk ratios and their 95% credible interval, 
+
+```{r, message=F}
+MTC_comp_RR <- MTC_comparison(map_txt = map_txt, model_smry = general_model_smry, measure = "RR",
+                              stat = "median", save_res = T)
+MTC_comp_RR
+```
+
+
+### Treatments rank summary
+### Using the **mean_rank_matrix ()** function
+
+Generate mean ranking matrix
+
+```{r, message=F}
+mean_rank <- mean_rank <- mean_rank_matrix(map_txt = map_txt, model_smry = general_model_smry, arm_name = "abbr",
+                              save_res = T)
+mean_rank
+```
+
+### Probability rank table
+
+Generate a list containing two dataframes. One is the probability matrix that a treatment is better than
+another based on posterior samples of treatment risk (probability). The other one summarize the probability that each
+treatment can be the best or the worst.
+
+
+
+```{r,prob_rank_chunk}
+load("./scripts/RDataObjects/generalModelJagasOutput.RData")
+prob_rank <- prob_rank_table(jags.out = jags.out, map_txt = map_txt, good_event = 0, arm_name = "abbr",save_res = T)
+prob_rank
+```
+
+
+For example, the cell [1,2] in 'prob_comp' element is the probability that Treatment A is better than Treatment B. cell [2,1] is the verse. Column 'Rank_1_prob' in 'rank_smry' component is the probability that each treatment can be ranked top 1.
+
+
+## Common Plots Used Reported for Network Meta-Analysis
+### Network plot: Using the **network_plot()** function
+
+The network_plot function generates the plot for the network of trials. You can set the node text size and node size and add plot title in the R script. The node size of each treatment reflects the number of studies containing that treatment. The edge width reflects the studies size of each comparison.
+
+```{r, network-plot-chuck}
+network_plot(MTCdata = MTCdata, map_txt = map_txt, dataType = "Arm")
+```
+
+### Probability distribution plot: Using the **network_plot()** function
+THis function enerates the plot for the distribution of probability of retreatmeng for each treatment in the MTC 
+
+The input for the **network_plot** function are:
+
+* layout: the layout of your figure, i.e c(1,2), c(2,2)
+
+* num_treat_per_plot: the number of treatment shown in each plot
+
+* treat_interested: the group of treatments for which you want to plot probability distribution. The default is "all", you can also input a vector of treatment numbers to specify the treatments you want to plot.
+
+* legend_pos: the position (coordinates) where you want to add your legend
+
+* other ploting parameters: i.e. ylim, main, ylab, xlab, etc
+
+Note that the placebo risk distribution is plotted on each plot. Suppose you want to plot all treatments (five in total) risk distribution plot in one figure with two side by side plots with each one containing three treatments. The 'layout' argument should be set as c(1,2) and 'num_treat_per_plot' = 3.
+
+```{r, distribution_probability_plot_1, message=F}
+load("./scripts/RDataObjects/generalModelJagasOutput.RData")
+dist_prob_treat(jags.out = jags.out, map_txt = map_txt, arm_name = "abbr", layout = c(1,2), 
+                num_treat_per_plot = 3)
+```
+
+If you would like to plot only treatment A, B, D, E in a single plot, then 
+
+```{r,distribution_probability_plot_2, message=F}
+dist_prob_treat(jags.out = jags.out, map_txt = map_txt, arm_name = "abbr", layout = c(1,1), 
+                num_treat_per_plot = 4, treat_interested = c(1, 2, 4, 5))
+```
+
+Note that the treatment numbers should match with the mapping in map_txt.
+
+If your layout and the number of treatment per plot couldn't plot all the treatment distributions you are interested in, then a message will pop up and ask you to change the setting.
+
+```{r,distribution_probability_plot_3, message=F}
+dist_prob_treat(jags.out = jags.out, map_txt = map_txt, arm_name = "abbr", layout = c(1,2), 
+                num_treat_per_plot = 2, treat_interested = "all")
+```
+
+### Ranking plot:  Using the **ranking_plot()** function
+
+Generate the ranking plot
+
+```{r,ranking_plot, fig.width=10}
+ranking_plot(MTCdata = MTCdata, map_txt = map_txt, model_smry = general_model_smry, arm_name = "abbr", cex = 2)
+```
+
+Note that the black dots are the mean ranking of each treatment and its size reflects the precision (1/variance) of the estimates.

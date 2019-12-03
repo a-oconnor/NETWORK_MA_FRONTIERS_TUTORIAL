@@ -1,0 +1,44 @@
+model{
+  for(i in 1:NS){
+    delta[i,t[i,1]] <- 0
+    y[i,2] ~ dnorm(delta[i,t[i,2]],prec[i,2])
+    vari[i,2] <- pow(se[i,2],2)
+    prec[i,2] <- 1/vari[i,2]
+    delta[i,t[i,2]] ~ dnorm(md[i,t[i,2]],tau)
+    md[i,t[i,2]] <- d[t[i,2]]-d[t[i,1]]
+  }
+	
+  d[1]<-0
+
+for (k in 2:NT){ 
+  d[k] ~ dnorm(0,hyperVarInNormMean)          # vague priors for treatment effects 
+  } 
+
+  sd ~ dunif(0,hyperSDInUnif)                         #  vague prior for random effects standard deviation 
+  tau<-1/pow(sd,2)
+	
+# Absolute log odds(success) on Treatment A,  based on a seperate model on the
+#  baseline Treatment A arms. 
+# mA ~ dnorm(-0.015322905,1.694339772)
+  mA ~ dnorm(meanmA,precmA)
+# Absolute pr(success) Treatments B,C,D based on T[1] and the 
+#   MEAN  Relative treatment effects 
+  for(k in 1:NT){ 
+      logit(T[k]) <- mA + d[k] 
+  }	
+
+# ranking 
+  rk <- rank(T[])
+  for(k in 1:NT){ 
+#    rk[k]<-NT+1 - rank(T[],k)
+     best[k]<-equals(rk[k],1)
+  }
+
+# pairwise ORs
+  for (c in 1:(NT)){
+      for(k in 1:NT){
+         lor[c,k] <- d[k] - d[c]
+         log(or[c,k]) <- lor[c,k]
+      }
+  }
+}
