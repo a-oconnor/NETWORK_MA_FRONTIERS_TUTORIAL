@@ -1,8 +1,0 @@
-Comparison,d_dir,sd_dir,d_MTC,sd_MTC,d_rest,sd_rest,w,sd_w,z_score,p_value
-Placebo vs Treatment_B,-2.31,0.44,-2.1,0.27,-1.97,0.34,-0.34,0.55,-0.62,0.53
-Placebo vs Treatment_E,-2.39,0.41,-2.58,0.31,-2.83,0.48,0.43,0.63,0.69,0.49
-Placebo vs Treatment_C,-1.82,0.37,-1.89,0.25,-1.95,0.35,0.12,0.51,0.25,0.81
-Placebo vs Treatment_D,-1.94,1.17,-1.94,0.76,-1.93,0.99,-0.01,1.53,-0.01,0.99
-Treatment_B vs Treatment_E,-0.58,0.47,-0.48,0.29,-0.41,0.37,-0.16,0.6,-0.27,0.79
-Treatment_B vs Treatment_C,-0.12,0.65,0.21,0.26,0.27,0.29,-0.39,0.71,-0.56,0.58
-Treatment_C vs Treatment_E,-0.63,1.16,-0.68,0.29,-0.69,0.3,0.06,1.19,0.05,0.96
