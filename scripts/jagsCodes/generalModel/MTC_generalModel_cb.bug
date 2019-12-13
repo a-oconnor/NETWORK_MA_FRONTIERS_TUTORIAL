@@ -1,0 +1,111 @@
+####### General Model for contrast based data: random effect, multi-arms(4 at most)
+model{                                                # *** PROGRAM STARTS
+  for(i in 1:NS[2]) {                                   # LOOP THROUGH 2-ARM STUDIES # normal likelihood for 2-arm trials
+    y[i,2] ~ dnorm(delta[i,t[i,2]],prec[i,2])
+    resdev[i] <- (y[i,2]-delta[i,t[i,2]])*(y[i,2]-delta[i,t[i,2]])*prec[i,2] #Deviance contribution for trial i
+  }
+  for(i in (NS[2]+1):(NS[2]+NS[3])) {                       # LOOP THROUGH 3-ARM STUDIES
+    for (k in 1:(na[i]-1)) {                          # set variance-covariance matrix 
+      for (j in 1:(na[i]-1)) { Sigma[i,j,k] <- V[i]*(1-equals(j,k)) + vari[i,(k+1)]*equals(j,k) }
+    }
+    Omega[i,1:(na[i]-1),1:(na[i]-1)] <- inverse(Sigma[i,,]) #Precision matrix
+    y[i,2:na[i]] ~ dmnorm(delta[i,t[i,2:na[i]]],Omega[i,1:(na[i]-1),1:(na[i]-1)]) # multivariate normal likelihood for 3-arm trials
+    
+    ## Deviance contribution for trial i
+    for (k in 1:(na[i]-1)){                           # multiply vector & matrix
+      ydiff[i,k]<- y[i,(k+1)] - delta[i,t[i,(k+1)]]
+      z[i,k]<- inprod(Omega[i,k,1:(na[i]-1)], ydiff[i,1:(na[i]-1)]) }
+    resdev[i]<- inprod(ydiff[i,1:(na[i]-1)], z[i,1:(na[i]-1)])
+  }
+  for(i in ((NS[2]+NS[3])+1):NS[1]){                   #Loop through 4-arm studies
+  	for(k in 1:(na[i]-1)){
+  		for(j in 1:(na[i]-1)){Sigma1[i,j,k] <- V[i]*(1-equals(j,k)) + vari[i,(k+1)]*equals(j,k)}
+  	}
+  	Omega1[i,1:(na[i]-1),1:(na[i]-1)] <- inverse(Sigma1[i,,])
+  	y[i,2:na[i]] ~ dmnorm(delta[i,t[i,2:na[i]]],Omega1[i,1:(na[i]-1),1:(na[i]-1)])
+
+  	 ## Deviance contribution for trial i
+    for (k in 1:(na[i]-1)){                           # multiply vector & matrix
+      ydiff[i,k]<- y[i,(k+1)] - delta[i,t[i,(k+1)]]
+      z[i,k]<- inprod(Omega1[i,k,1:(na[i]-1)], ydiff[i,1:(na[i]-1)]) }
+    resdev[i]<- inprod(ydiff[i,1:(na[i]-1)], z[i,1:(na[i]-1)])
+  }
+  for(i in 1:NS[1]){                              # LOOP THROUGH ALL STUDIES
+    w[i,1] <- 0                                       # adjustment for multi-arm trials is zero for control arm
+    delta[i,t[i,1]] <- 0                       			# treatment effect is zero for control arm
+    for (k in 2:na[i]) {						# LOOP THROUGH ARMS
+      vari[i,k] <- pow(se[i,k],2) 				# calculate variances
+	prec[i,k] <- 1/vari[i,k]					# set precisions
+    }
+    for (k in 2:na[i]) {						# LOOP THROUGH ARMS
+      delta[i,t[i,k]] ~ dnorm(md[i,t[i,k]],taud[i,t[i,k]]) 		# trial-specific treat effects distributions
+	md[i,t[i,k]] <- d[t[i,k]] - d[t[i,1]] + sw[i,k] 		# mean of treat effects distributions (with multi-arm trial correction)
+	taud[i,t[i,k]] <- tau *2*(k-1)/k					# precision of treat effects distributions (with multi-arm trial correction)
+      	w[i,k] <- (delta[i,t[i,k]] - d[t[i,k]] + d[t[i,1]])	# adjustment for multi-arm RCTs 
+	sw[i,k] <- sum(w[i,1:(k-1)])/(k-1)				# cumulative adjustment for multi-arm trials
+    } 
+}
+  totresdev <- sum(resdev[])					#Total Residual Deviance
+  d[1]<-0									# treatment effect is zero for reference treatment
+  for (k in 2:NT){ 
+	d[k] ~ dnorm(0,hyperVarInNormMean) 					# vague priors for treatment effects
+
+	} 
+	sd ~ dunif(0,hyperSDInUnif)							# vague prior for between-trial SD
+  	tau <- pow(sd,-2)							# between-trial precision = (1/between-trial variance) 
+										
+
+ ## provide estimates of treatment effects T[k] on the probability scale
+  ## Given a mean effect, for 'control/standard' treatment 
+     mA ~ dnorm(meanmA, precmA) 
+  # Absolute pr(success) other treatments based on T[1] and the mean relative treatment effects 
+  for(k in 1:NT){
+      logit(T[k]) <- mA + d[k]
+  } 
+
+  ## Provide Risk Difference RD[k], and Relative Risk RR[k], for each treatment, relative to treatment 1
+  
+  for(k in 1:NT){
+     RD[k]  <- T[k] - T[1]
+     RRa[k] <- T[k]/T[1]     # RRa[1]: store T[2] relative risk  
+  }
+
+    ## pairwise relative risk  
+  for(c in 1:(NT)){
+      for(k in 1:NT){
+         RR[c,k] <- T[c]/T[k]
+      }
+  }
+
+  ## ranking and prob(treatment k is best): in jags: rank(v) returns a vector cosists of ranks of elements of vector v 
+
+  rk_bad <- rank(T[])   ## JAGS rank func different from rank() in Winbugs 2) assume events are "bad"
+  rk_good <- rank(-T[]) ## assume events are "good"
+  for(k in 1:NT){
+    rk[k] <- rk_good[k]*equals(good_event, 1) + rk_bad[k] * equals(good_event, 0)
+  }
+
+  for(k in 1:NT){
+      best[k] <- equals(rk[k], 1)
+  }
+
+  ## pairwise ORs: JAGS need whole 
+  for(c in 1:NT){
+      for(k in 1:NT){
+          lor[c,k] <- d[c] - d[k]
+          log(or[c,k]) <- lor[c,k]
+      }
+  }
+
+}
+
+
+
+
+
+
+ 
+
+
+
+

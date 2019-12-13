@@ -1,0 +1,81 @@
+################## General Model: random effect, multi-arms 
+model{
+	for(i in 1:NS){                          ## loop through studies/trials  
+	   
+	   w[i,1] <- 0                           ## adjustment for multi-arm trials is 0 for control arm 
+	   delta[i,t[i,1]] <- 0                  ## treatment effect is 0 for control arm 
+	   mu[i] ~ dnorm(0, hyperVarInNormMean)              ## vague priors for all trial baselines  
+	   
+	   for(k in 1:na[i]){                    ## for each trial, loop through arms  
+	     r[i,k] ~ dbin(p[i,t[i,k]], n[i,k])  ## binomial likelihood 
+	     logit(p[i,t[i,k]]) <- mu[i] + delta[i,t[i,k]]   ## logit link func & model for linear predictor 
+	     rhat[i,k] <- p[i,t[i,k]] * n[i,k] # expected value of the numerators 
+	     dev[i,k] <- 2*( r[i,k] * (log(r[i,k]) - log(rhat[i,k])) + 
+                         (n[i,k] - r[i,k]) * (log(n[i,k] - r[i,k]) - log(n[i,k] - rhat[i,k]))
+	                    )      ## calculate deviance contribution 
+	   }
+
+	   resdev[i] <- sum(dev[i,1:na[i]])  ## summed residual deviance contribution for this trial 
+
+	   for(k in 2:na[i]){                     ## loop through non-control arms for this trial 
+	     delta[i,t[i,k]] ~ dnorm(md[i, t[i,k]], taud[i, t[i,k]]) # trial-specific LOR distributions 
+	     md[i, t[i,k]] <- d[t[i,k]] - d[t[i,1]] + sw[i,k]  # mean of LOR distributions with multi-arm trial correction 
+	     taud[i, t[i,k]] <- tau * 2 * (k-1)/k    # precison of LOR distributions
+	     w[i,k] <- (delta[i,t[i,k]] - d[t[i,k]] + d[t[i,1]]) # adjustment, multi-arm RCTs
+	     sw[i,k] <- sum(w[i, 1:(k-1)])/(k-1)
+	   }
+	}
+
+	totresdev <- sum(resdev[])        	 ## total residual deviance 
+
+	d[1] <- 0                         		 ## treatment effect is zero for reference treatment 
+	for(k in 2:NT){
+	    d[k] ~ dnorm(0, hyperVarInNormMean)        ## vague priors for treatment effects 
+	}
+
+	sd ~ dunif(0,hyperSDInUnif)                    ## vague prior for between-trial SD. 
+	tau <- 1/pow(sd,2)                		 ## between-trial precision 
+
+	## provide estimates of treatment effects T[k] on the probability scale
+	## Given a mean effect, for 'control/standard' treatment 
+     mA ~ dnorm(meanmA, precmA) 
+	# Absolute pr(success) other treatments based on T[1] and the mean relative treatment effects 
+	for(k in 1:NT){
+	    logit(T[k]) <- mA + d[k]
+	} 
+
+	## Provide Risk Difference RD[k], and Relative Risk RR[k], for each treatment, relative to treatment 1
+	
+	for(k in 1:NT){
+	   RD[k]  <- T[k] - T[1]
+	   RRa[k] <- T[k]/T[1]     # RRa[1]: store T[2] relative risk  
+	}
+
+    ## pairwise relative risk  
+	for(c in 1:(NT)){
+	    for(k in 1:NT){
+	       RR[c,k] <- T[c]/T[k]
+	    }
+	}
+
+	## ranking and prob(treatment k is best): in jags: rank(v) returns a vector cosists of ranks of elements of vector v 
+
+	rk_bad <- rank(T[])   ## JAGS rank func different from rank() in Winbugs 2) assume events are "bad"
+	rk_good <- rank(-T[]) ## assume events are "good"
+	for(k in 1:NT){
+		rk[k] <- rk_good[k]*equals(good_event, 1) + rk_bad[k] * equals(good_event, 0)
+	}
+
+	for(k in 1:NT){
+	    best[k] <- equals(rk[k], 1)
+	}
+
+	## pairwise ORs: JAGS need whole 
+	for(c in 1:NT){
+	    for(k in 1:NT){
+	        lor[c,k] <- d[c] - d[k]
+	        log(or[c,k]) <- lor[c,k]
+	    }
+	}
+
+}
